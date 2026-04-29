@@ -5,6 +5,8 @@ const NUM_CHANNELS = 8;
 let ble;
 let channelCharacteristic = null;
 let isConnected = false;
+let isWriting = false;
+let queuedPayload = null;
 let sliders = [];
 let valueLabels = [];
 let statusLabel;
@@ -49,6 +51,11 @@ function gotCharacteristics(error, characteristics) {
     return;
   }
 
+  if (!Array.isArray(characteristics) || characteristics.length === 0) {
+    statusLabel.html("Connection error: no BLE characteristics found");
+    return;
+  }
+
   channelCharacteristic = characteristics.find((characteristic) => {
     return characteristic.uuid.toLowerCase() === CHARACTERISTIC_UUID;
   }) || characteristics[0];
@@ -67,8 +74,40 @@ function sendChannels() {
     return;
   }
 
-  const payload = Uint8Array.from(currentValues());
-  ble.write(channelCharacteristic, payload);
+  queuedPayload = Uint8Array.from(currentValues());
+  drainWriteQueue();
+}
+
+async function drainWriteQueue() {
+  if (isWriting || queuedPayload === null || channelCharacteristic === null) {
+    return;
+  }
+
+  isWriting = true;
+  try {
+    while (queuedPayload !== null) {
+      const payload = queuedPayload;
+      queuedPayload = null;
+      await writePayload(payload);
+    }
+  } catch (error) {
+    statusLabel.html(`Write error: ${error.message || error}`);
+  } finally {
+    isWriting = false;
+    if (queuedPayload !== null) {
+      drainWriteQueue();
+    }
+  }
+}
+
+function writePayload(payload) {
+  if (typeof channelCharacteristic.writeValueWithoutResponse === "function") {
+    return channelCharacteristic.writeValueWithoutResponse(payload);
+  }
+  if (typeof channelCharacteristic.writeValueWithResponse === "function") {
+    return channelCharacteristic.writeValueWithResponse(payload);
+  }
+  return channelCharacteristic.writeValue(payload);
 }
 
 function setAll(value) {

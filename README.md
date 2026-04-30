@@ -1,8 +1,8 @@
 # DropCeiling Arduino Library
 
-DropCeiling is an Arduino library for the 8-channel Drop Ceiling 0-10V controller. It wraps the DAC output, ArtNet parsing, optional TFT visualization, and multiple input methods behind one `DropCeiling` datatype.
+DropCeiling is an Arduino library for the 8-channel Drop Ceiling 0-10V controller. It allows control via Art Net over Ethernet or WiFi, Serial, BLE, or as a standalone controller.
 
-This repository is structured as a standard Arduino library. The repo root contains `library.properties`, `keywords.txt`, `src/`, and `examples/`.
+
 
 ## Supported Modes
 

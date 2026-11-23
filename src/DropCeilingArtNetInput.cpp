@@ -56,8 +56,13 @@ bool DropCeilingArtNetInput::receivedRecently() const {
 // it on 6454 as the standard expects; a tool polling from any other port still hears it.
 void DropCeilingArtNetInput::sendPollReply(const IPAddress &to, uint16_t port) {
   uint8_t reply[DropCeilingArtNet::PollReplySize];
+  char report[52] = {0};
+  if (_config.nodeReportFn != nullptr) {
+    _config.nodeReportFn(report, sizeof(report));
+  }
   _replies++;
-  size_t length = DropCeilingArtNet::buildPollReply(reply, sizeof(reply), _config, localIP(), _live, _replies);
+  size_t length = DropCeilingArtNet::buildPollReply(reply, sizeof(reply), _config, localIP(), _live, _replies,
+                                                    _config.nodeReportFn != nullptr ? report : nullptr);
   if (length == 0) {
     return;
   }

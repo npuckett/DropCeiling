@@ -208,6 +208,9 @@ static void pollReply() {
   CHECK(reply[207] == 10 && reply[210] == 202 && reply[211] == 1);
   CHECK(reply[212] == 0x0C);
   CHECK(DropCeilingArtNet::buildPollReply(reply, 100, config, IPAddress(), false, 0) == 0);
+  // A report written fresh for this reply takes the place of the stored one.
+  DropCeilingArtNet::buildPollReply(reply, sizeof(reply), config, IPAddress(10, 42, 0, 202), true, 8, "fr=999 LIVE");
+  CHECK(strcmp((const char *)&reply[108], "#0001 [0008] fr=999 LIVE") == 0);
   // The report never overruns its 64 bytes.
   char longText[200];
   memset(longText, 'x', sizeof(longText) - 1);

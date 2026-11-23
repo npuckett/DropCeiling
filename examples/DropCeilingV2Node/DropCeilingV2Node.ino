@@ -144,15 +144,19 @@ void deriveIdentity() {
   config.lossFadeMs = LOSS_FADE_MS;
   config.lossLevel = 0;
   config.resumeFadeMs = RESUME_FADE_MS;
+  config.nodeReportFn = writeReport;
 }
 
-void updateReport() {
-  // Read by the tower's board check (dropCeilingV2-DEV ops/boards). key=value, space separated.
-  char text[49];
-  snprintf(text, sizeof(text), "up=%lu fr=%lu e=%lu rs=%s r=%u %s", static_cast<unsigned long>(millis() / 1000),
+// The node report, written as each ArtPollReply is built, so its frame count is exact at the moment of the poll.
+// Read by the tower's board tests (dropCeilingV2-DEV ops/boards): key=value, space separated, then the state.
+void writeReport(char *out, size_t size) {
+  if (ceiling == nullptr) {
+    snprintf(out, size, "starting");
+    return;
+  }
+  snprintf(out, size, "up=%lu fr=%lu e=%lu rs=%s r=%u %s", static_cast<unsigned long>(millis() / 1000),
            static_cast<unsigned long>(ceiling->frames()), static_cast<unsigned long>(ceiling->dacErrors()), resetCause(),
            resolution, ceiling->dacReady() ? signalName(ceiling->signal()) : "NODAC");
-  ceiling->setNodeReport(text);
 }
 
 void printMac(const uint8_t *mac) {
@@ -265,7 +269,6 @@ void setup() {
 
   ceiling = new DropCeiling(DropCeilingMode_Ethernet, config);
   bool ok = ceiling->setup();
-  updateReport();
   Serial.printf("DropCeiling V2 node %s fw %s: %s\n", shortName, FW_VERSION, ok ? "ready" : "NOT READY");
   if (!ceiling->dacReady()) {
     Serial.println("ERROR: DAC did not answer on I2C");
@@ -293,7 +296,6 @@ void loop() {
   uint32_t now = millis();
   if (now - lastReport >= 1000) {
     lastReport = now;
-    updateReport();
     if (!ceiling->ready() && now > NOT_READY_RESTART_MS) {
       restart(ceiling->dacReady() ? "network not ready" : "DAC not ready");
     }

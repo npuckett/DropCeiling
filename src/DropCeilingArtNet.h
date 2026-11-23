@@ -25,8 +25,9 @@ namespace DropCeilingArtNet {
   ParseResult parsePacket(const uint8_t *data, uint16_t length, const DropCeilingConfig &config, uint16_t levels[DROPCEILING_CHANNELS]);
 
   // live sets GoodOutput's "data being transmitted" bit. replies counts replies sent, for the node report.
+  // report is the node report text; nullptr uses config.nodeReport.
   size_t buildPollReply(uint8_t *reply, size_t replySize, const DropCeilingConfig &config, const IPAddress &localIp,
-                        bool live, uint16_t replies);
+                        bool live, uint16_t replies, const char *report = nullptr);
 }
 
 #endif

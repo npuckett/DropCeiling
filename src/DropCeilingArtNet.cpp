@@ -70,7 +70,7 @@ DropCeilingArtNet::ParseResult DropCeilingArtNet::parsePacket(const uint8_t *dat
 }
 
 size_t DropCeilingArtNet::buildPollReply(uint8_t *reply, size_t replySize, const DropCeilingConfig &config, const IPAddress &localIp,
-                                         bool live, uint16_t replies) {
+                                         bool live, uint16_t replies, const char *report) {
   if (replySize < PollReplySize) {
     return 0;
   }
@@ -100,8 +100,10 @@ size_t DropCeilingArtNet::buildPollReply(uint8_t *reply, size_t replySize, const
   strncpy(reinterpret_cast<char *>(&reply[44]), config.nodeLongName, 63);
 
   // NodeReport: "#xxxx [yyyy] text". 0001 is RcPowerOk.
-  snprintf(reinterpret_cast<char *>(&reply[108]), 64, "#0001 [%04u] %s", static_cast<unsigned>(replies % 10000),
-           config.nodeReport == nullptr ? "" : config.nodeReport);
+  if (report == nullptr) {
+    report = config.nodeReport == nullptr ? "" : config.nodeReport;
+  }
+  snprintf(reinterpret_cast<char *>(&reply[108]), 64, "#0001 [%04u] %s", static_cast<unsigned>(replies % 10000), report);
 
   reply[172] = 0;     // NumPortsHi
   reply[173] = 1;     // NumPortsLo

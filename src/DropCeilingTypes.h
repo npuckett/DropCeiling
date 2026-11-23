@@ -77,6 +77,9 @@ struct DropCeilingConfig {
   uint8_t firmwareVersionLo = 0;
   // Optional text for the ArtPollReply node report, after the status code and counter. Health goes here.
   const char *nodeReport = nullptr;
+  // If set, called as each ArtPollReply is built, to write the report text fresh (counters as of this moment).
+  // Takes the place of nodeReport.
+  void (*nodeReportFn)(char *out, size_t size) = nullptr;
 
   uint8_t standaloneValues[DROPCEILING_CHANNELS] = {0, 0, 0, 0, 0, 0, 0, 0};
 };

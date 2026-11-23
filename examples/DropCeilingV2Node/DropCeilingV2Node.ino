@@ -21,17 +21,22 @@
 //   subnet <a.b.c>       first three octets for the static address, then restart (default 10.42.0)
 //   reboot
 //   help
+//
+// Status over the network: send "show" in a UDP packet to port 6455 and the board answers with the same JSON line
+// `show` prints here, to whoever asked. Read only: settings change over USB, never over the network. The tower's
+// board tests (dropCeilingV2-DEV ops/boards) poll it beside Art-Net's ArtPoll, which carries a shorter report.
 
 #include <DropCeiling.h>
 #include <Preferences.h>
+#include <stdarg.h>
 #include <esp_mac.h>
 #include <esp_system.h>
 #include <esp_task_wdt.h>
 #include <esp_timer.h>
 
 static const uint8_t FW_MAJOR = 2;
-static const uint8_t FW_MINOR = 0;
-static const char FW_VERSION[] = "2.0.0";
+static const uint8_t FW_MINOR = 1;
+static const char FW_VERSION[] = "2.1.0";
 
 // Loss of signal, from dropCeilingV2-DEV engine/DESIGN.md: after 10 s of silence fade to 0 over 30 s.
 // Off is dark, so this reads as closed and not broken. Frames after a loss, or after a restart, are
@@ -47,6 +52,8 @@ static const uint32_t WATCHDOG_MS = 15000;
 static const uint8_t MAX_NODE = 54;
 // A board whose DAC or network did not start restarts after this long, loudly, rather than sit dark.
 static const uint32_t NOT_READY_RESTART_MS = 30000;
+// The status port: Art-Net's 6454 plus one.
+static const uint16_t STATUS_PORT = 6455;
 
 Preferences prefs;
 DropCeilingConfig config;
@@ -62,6 +69,13 @@ char chipId[18];
 char consoleLine[64];
 uint8_t consoleLength = 0;
 uint32_t lastReport = 0;
+EthernetUDP statusUdp;
+bool statusOpen = false;
+char statusLine[768];
+// The longest pass through loop(), in ms: since start, and since the last status query. A long pass is what drops
+// or bunches frames, so a load test wants to see it.
+uint32_t loopMaxMs = 0;
+uint32_t loopMaxSinceMs = 0;
 
 const char *resetCause() {
   switch (esp_reset_reason()) {
@@ -171,26 +185,73 @@ unsigned long long uptimeS() {
   return static_cast<unsigned long long>(esp_timer_get_time() / 1000000LL);
 }
 
-void printMac(const uint8_t *mac) {
-  Serial.printf("%02X:%02X:%02X:%02X:%02X:%02X", mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
+// Appends to statusLine; the line is cut short rather than overrun.
+size_t statusAppend(size_t at, const char *format, ...) {
+  if (at >= sizeof(statusLine)) {
+    return at;
+  }
+  va_list args;
+  va_start(args, format);
+  int n = vsnprintf(statusLine + at, sizeof(statusLine) - at, format, args);
+  va_end(args);
+  return n < 0 ? at : at + static_cast<size_t>(n);
+}
+
+// One JSON line: identity, network, health, levels. The same over USB serial and over UDP.
+const char *formatStatus() {
+  IPAddress ip = ceiling->localIP();
+  const uint8_t *m = config.mac;
+  size_t at = 0;
+  at = statusAppend(at, "{\"fw\":\"%s\",\"node\":%u,\"name\":\"%s\",\"chipMac\":\"%s\"", FW_VERSION, node, shortName, chipId);
+  at = statusAppend(at, ",\"mac\":\"%02X:%02X:%02X:%02X:%02X:%02X\"", m[0], m[1], m[2], m[3], m[4], m[5]);
+  at = statusAppend(at, ",\"ip\":\"%u.%u.%u.%u\",\"dhcp\":%s,\"universe\":%u,\"res\":%u", ip[0], ip[1], ip[2], ip[3],
+                    ceiling->ethernet().usingDhcp() ? "true" : "false", config.artnetUniverse, resolution);
+  at = statusAppend(at, ",\"ethernet\":%s,\"link\":%s,\"dac\":%s", ceiling->ethernet().hardwareFound() ? "true" : "false",
+                    ceiling->ethernet().linkUp() ? "true" : "false", ceiling->dacReady() ? "true" : "false");
+  at = statusAppend(at, ",\"signal\":\"%s\",\"frames\":%lu,\"losses\":%lu,\"dacErrors\":%lu,\"uptimeS\":%llu,\"reset\":\"%s\"",
+                    signalName(ceiling->signal()), static_cast<unsigned long>(ceiling->frames()),
+                    static_cast<unsigned long>(ceiling->losses()), static_cast<unsigned long>(ceiling->dacErrors()),
+                    uptimeS(), resetCause());
+  at = statusAppend(at, ",\"tempC\":%.1f,\"heapFree\":%lu,\"heapMin\":%lu,\"loopMaxMs\":%lu,\"loopMaxSinceMs\":%lu",
+                    temperatureRead(), static_cast<unsigned long>(ESP.getFreeHeap()),
+                    static_cast<unsigned long>(ESP.getMinFreeHeap()), static_cast<unsigned long>(loopMaxMs),
+                    static_cast<unsigned long>(loopMaxSinceMs));
+  at = statusAppend(at, ",\"levels\":[");
+  for (uint8_t c = 1; c <= DROPCEILING_CHANNELS; c++) {
+    at = statusAppend(at, "%s%u", c == 1 ? "" : ",", ceiling->getOutputLevel(c));
+  }
+  at = statusAppend(at, "],\"codes\":[");
+  for (uint8_t c = 1; c <= DROPCEILING_CHANNELS; c++) {
+    at = statusAppend(at, "%s%u", c == 1 ? "" : ",", ceiling->getCode(c));
+  }
+  statusAppend(at, "]}");
+  return statusLine;
 }
 
 void show() {
-  IPAddress ip = ceiling->localIP();
-  Serial.printf("{\"fw\":\"%s\",\"node\":%u,\"name\":\"%s\",\"chipMac\":\"%s\",\"mac\":\"", FW_VERSION, node, shortName, chipId);
-  printMac(config.mac);
-  Serial.printf("\",\"ip\":\"%u.%u.%u.%u\",\"dhcp\":%s,\"universe\":%u,\"res\":%u", ip[0], ip[1], ip[2], ip[3],
-                ceiling->ethernet().usingDhcp() ? "true" : "false", config.artnetUniverse, resolution);
-  Serial.printf(",\"ethernet\":%s,\"link\":%s,\"dac\":%s", ceiling->ethernet().hardwareFound() ? "true" : "false",
-                ceiling->ethernet().linkUp() ? "true" : "false", ceiling->dacReady() ? "true" : "false");
-  Serial.printf(",\"signal\":\"%s\",\"frames\":%lu,\"losses\":%lu,\"dacErrors\":%lu,\"uptimeS\":%llu,\"reset\":\"%s\",\"codes\":[",
-                signalName(ceiling->signal()), static_cast<unsigned long>(ceiling->frames()),
-                static_cast<unsigned long>(ceiling->losses()), static_cast<unsigned long>(ceiling->dacErrors()),
-                uptimeS(), resetCause());
-  for (uint8_t c = 1; c <= DROPCEILING_CHANNELS; c++) {
-    Serial.printf("%s%u", c == 1 ? "" : ",", ceiling->getCode(c));
+  Serial.println(formatStatus());
+}
+
+// Answers "show" on the status port. One query per loop pass at most, so a flood cannot starve Art-Net.
+void serveStatus() {
+  if (!statusOpen || statusUdp.parsePacket() <= 0) {
+    return;
   }
-  Serial.println("]}");
+  char ask[8] = {0};
+  statusUdp.read(reinterpret_cast<uint8_t *>(ask), sizeof(ask) - 1);
+  while (statusUdp.available() > 0) {
+    statusUdp.read();
+  }
+  if (strncmp(ask, "show", 4) != 0) {
+    return;
+  }
+  const char *line = formatStatus();
+  loopMaxSinceMs = 0;
+  if (statusUdp.beginPacket(statusUdp.remoteIP(), statusUdp.remotePort())) {
+    statusUdp.write(reinterpret_cast<const uint8_t *>(line), strlen(line));
+    statusUdp.write(static_cast<uint8_t>('\n'));
+    statusUdp.endPacket();
+  }
 }
 
 void restart(const char *why) {
@@ -288,6 +349,9 @@ void setup() {
   if (!ceiling->ethernet().hardwareFound()) {
     Serial.println("ERROR: no W5500 Ethernet found");
   }
+  if (ceiling->ethernet().hardwareFound()) {
+    statusOpen = statusUdp.begin(STATUS_PORT) == 1;
+  }
   show();
 
   esp_task_wdt_config_t wdt = {};
@@ -301,9 +365,20 @@ void setup() {
 }
 
 void loop() {
+  static uint32_t passStart = millis();
   esp_task_wdt_reset();
   ceiling->read();
   readConsole();
+  serveStatus();
+
+  uint32_t pass = millis() - passStart;
+  passStart = millis();
+  if (pass > loopMaxMs) {
+    loopMaxMs = pass;
+  }
+  if (pass > loopMaxSinceMs) {
+    loopMaxSinceMs = pass;
+  }
 
   uint32_t now = millis();
   if (now - lastReport >= 1000) {

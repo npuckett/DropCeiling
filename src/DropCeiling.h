@@ -84,7 +84,7 @@ private:
   DropCeilingDisplay *_display;
   DropCeilingDisplayST7789 _builtInDisplay;
   bool _usingBuiltInDisplay;
-  bool _lastConnectionStatus;
+  DropCeilingDisplayState _lastState;
   unsigned long _lastDisplayUpdate;
 
   DropCeilingInput *selectInput();
@@ -93,6 +93,7 @@ private:
   int8_t channelToIndex(uint8_t channel) const;
   void beginDisplay();
   void refreshDisplay(bool force = false);
+  DropCeilingDisplayState displayState() const;
 };
 
 #endif

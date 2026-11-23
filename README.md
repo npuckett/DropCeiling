@@ -110,13 +110,22 @@ carries the firmware items from dropCeilingV2-DEV's `docs/decisions/D0004-wiring
 | FW3 | Art-Net universe `n`, start slot 1, short name `DC2-Kn` |
 | FW4 | `res 16`: two slots per channel, high byte then low, DAC code = value >> 6. `res 8` (default): one slot per channel |
 | FW5 | After 10 s without a frame, fade to 0 over 30 s. Frames after a loss or a restart fade in over 2 s |
-| FW6 | Health in ArtPollReply (version, MAC, node report `up= fr= e= rs= r=` and `LIVE`/`WAIT`/`LOST`), and an 8 s hardware watchdog |
+| FW6 | Health in ArtPollReply (version, MAC, node report `up= fr= e= rs= r=` and `LIVE`/`WAIT`/`LOST`), the fuller status line over UDP (below), and a 15 s task watchdog |
 
 A restart of the processor no longer drops the outputs: the library reads back what the DAC holds and starts from there.
 Node 0 means unassigned: DHCP, universe 0, and a MAC made from the chip's own.
 
 Serial console at 115200 baud: `show` prints one JSON line with identity, network, health and the DAC codes. `node`,
-`res`, `net` and `subnet` write flash and restart. FW7 (a dead board against a live driver) is a bench test, and FW8
+`res`, `net` and `subnet` write flash and restart.
+
+The same line over the network: send `show` in a UDP packet to port 6455 and the board answers with it. Beside the
+fields above it carries `tempC` (the chip), `heapFree` and `heapMin`, `loopMaxMs` and `loopMaxSinceMs` (the longest
+pass through the loop since start and since the last query: a long pass is what drops or bunches frames), and
+`levels`, the 16-bit output after any fade. It is read only; settings change over USB alone.
+
+The screen shows the board's name as large as it fits, its state in colour (`LIVE` green, `WAIT` amber, `LOST`,
+`NO LINK` or `NO DAC` red, worst first), its address, universe, firmware and resolution, and the eight output levels as
+bars. It is redrawn at most every 100 ms and only where something changed, so it costs the Art-Net loop little. FW7 (a dead board against a live driver) is a bench test, and FW8
 (light sensors) is not built.
 
 ### Levels

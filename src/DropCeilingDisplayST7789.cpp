@@ -9,11 +9,23 @@ const int16_t CHAR_H = 8;
 const int16_t NAME_Y = 4;          // the name, up to 32 px tall
 const int16_t STATE_Y = 42;        // state and address, size 2
 const int16_t INFO_Y = 62;         // universe, firmware, resolution, size 1
-const int16_t BARS_Y = 76;         // the top of the bars
-const int16_t BARS_H = 44;
-const int16_t SLOT_W = W / DROPCEILING_CHANNELS;
-const int16_t BAR_W = 20;
-const int16_t LABEL_Y = BARS_Y + BARS_H + 4;
+// The outputs as the V2 board lays out its ports: numbered 0 to 7 (DAC channel A to H), in two rows that
+// alternate, the odd ports on top (1 3 5 7) and the even ones below (0 2 4 6), so port 1 sits above port 0.
+// Each port is a cell: its number, then a bar filling left to right with its level.
+const int16_t PORTS_TOP_Y = 76;    // the top row of cells
+const int16_t PORTS_ROW_H = 28;
+const int16_t PORT_CELL_W = W / (DROPCEILING_CHANNELS / 2);
+const int16_t PORT_LABEL_W = 16;   // one digit at size 2, and a gap
+const int16_t PORT_BAR_W = PORT_CELL_W - PORT_LABEL_W - 6;
+const int16_t PORT_BAR_H = 20;
+
+int16_t portX(uint8_t port) {
+  return (port / 2) * PORT_CELL_W;
+}
+
+int16_t portY(uint8_t port) {
+  return port % 2 == 1 ? PORTS_TOP_Y : PORTS_TOP_Y + PORTS_ROW_H;
+}
 
 const uint16_t COL_BG = ST77XX_BLACK;
 const uint16_t COL_TEXT = ST77XX_WHITE;
@@ -114,14 +126,14 @@ void DropCeilingDisplayST7789::drawStaticUI(const IPAddress &localIP, uint16_t u
   _tft.setCursor(4, INFO_Y);
   _tft.print(info);
 
-  for (uint8_t channel = 0; channel < DROPCEILING_CHANNELS; channel++) {
-    int16_t x = channel * SLOT_W + (SLOT_W - BAR_W) / 2;
-    _tft.fillRect(x, BARS_Y, BAR_W, BARS_H, COL_BAR_BG);
-    _tft.setTextSize(1);
+  for (uint8_t port = 0; port < DROPCEILING_CHANNELS; port++) {
+    int16_t x = portX(port), y = portY(port);
+    _tft.setTextSize(2);
     _tft.setTextColor(COL_LABEL, COL_BG);
-    _tft.setCursor(channel * SLOT_W + (SLOT_W - CHAR_W) / 2, LABEL_Y);
-    _tft.print(channel + 1);
-    _displayValues[channel] = 0xFF;
+    _tft.setCursor(x + 2, y + (PORT_BAR_H - 2 * CHAR_H) / 2);
+    _tft.print(port);
+    _tft.fillRect(x + PORT_LABEL_W, y, PORT_BAR_W, PORT_BAR_H, COL_BAR_BG);
+    _displayValues[port] = 0xFF;
   }
 
   setState(DropCeilingDisplayState_Waiting);
@@ -171,14 +183,14 @@ bool DropCeilingDisplayST7789::isLikelyAvailable() {
 }
 
 void DropCeilingDisplayST7789::drawChannel(uint8_t channel, uint8_t value) {
-  int16_t x = channel * SLOT_W + (SLOT_W - BAR_W) / 2;
-  int16_t h = static_cast<int16_t>((static_cast<int32_t>(value) * BARS_H + 127) / 255);
+  int16_t x = portX(channel) + PORT_LABEL_W, y = portY(channel);
+  int16_t w = static_cast<int16_t>((static_cast<int32_t>(value) * PORT_BAR_W + 127) / 255);
   // Only the two parts, so the bar never flickers through empty.
-  if (h < BARS_H) {
-    _tft.fillRect(x, BARS_Y, BAR_W, BARS_H - h, COL_BAR_BG);
+  if (w > 0) {
+    _tft.fillRect(x, y, w, PORT_BAR_H, COL_BAR);
   }
-  if (h > 0) {
-    _tft.fillRect(x, BARS_Y + BARS_H - h, BAR_W, h, COL_BAR);
+  if (w < PORT_BAR_W) {
+    _tft.fillRect(x + w, y, PORT_BAR_W - w, PORT_BAR_H, COL_BAR_BG);
   }
   _displayValues[channel] = value;
 }

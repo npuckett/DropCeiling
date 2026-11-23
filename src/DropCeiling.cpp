@@ -6,7 +6,7 @@ DropCeiling::DropCeiling(DropCeilingMode mode)
 
 DropCeiling::DropCeiling(DropCeilingMode mode, const DropCeilingConfig &config)
   : _mode(mode), _config(config), _ready(false), _dacReady(false), _inputReady(false), _lastFrames(0), _input(nullptr),
-    _display(nullptr), _usingBuiltInDisplay(false), _lastConnectionStatus(false), _lastDisplayUpdate(0) {
+    _display(nullptr), _usingBuiltInDisplay(false), _lastState(DropCeilingDisplayState_Waiting), _lastDisplayUpdate(0) {
   memset(_values, 0, sizeof(_values));
   memset(_target, 0, sizeof(_target));
   memset(_report, 0, sizeof(_report));
@@ -277,25 +277,43 @@ void DropCeiling::refreshDisplay(bool force) {
     return;
   }
 
-  uint8_t shown[DROPCEILING_CHANNELS];
-  outputBytes(shown);
-  bool connectionStatus = connected();
-  if (force) {
-    _display->drawStaticUI(localIP(), _config.artnetUniverse, shown);
-    _display->setConnectionStatus(connectionStatus);
-    _lastConnectionStatus = connectionStatus;
-    _lastDisplayUpdate = millis();
+  // Only every displayRefreshMs: the link state is a register read over SPI, and drawing takes time
+  // the Art-Net loop would rather have.
+  unsigned long now = millis();
+  if (!force && now - _lastDisplayUpdate < _config.displayRefreshMs) {
     return;
   }
+  _lastDisplayUpdate = now;
 
-  if (connectionStatus != _lastConnectionStatus) {
-    _display->setConnectionStatus(connectionStatus);
-    _lastConnectionStatus = connectionStatus;
+  uint8_t shown[DROPCEILING_CHANNELS];
+  outputBytes(shown);
+  DropCeilingDisplayState state = displayState();
+  if (force) {
+    _display->drawStaticUI(localIP(), _config.artnetUniverse, shown);
+    _display->setState(state);
+    _lastState = state;
+    return;
   }
+  if (state != _lastState) {
+    _display->setState(state);
+    _lastState = state;
+  }
+  _display->updateChannels(shown);
+}
 
-  unsigned long now = millis();
-  if (now - _lastDisplayUpdate >= _config.displayRefreshMs) {
-    _display->updateChannels(shown);
-    _lastDisplayUpdate = now;
+DropCeilingDisplayState DropCeiling::displayState() const {
+  if (!_dacReady) {
+    return DropCeilingDisplayState_NoDac;
   }
+  if (_input == &_ethernetInput && _ethernetInput.hardwareFound() && !_ethernetInput.linkUp()) {
+    return DropCeilingDisplayState_NoLink;
+  }
+  if (_fader.lossTimeoutMs > 0) {
+    switch (_fader.signal()) {
+      case DropCeilingSignal_Live: return DropCeilingDisplayState_Live;
+      case DropCeilingSignal_Lost: return DropCeilingDisplayState_Lost;
+      default: return DropCeilingDisplayState_Waiting;
+    }
+  }
+  return connected() ? DropCeilingDisplayState_Live : DropCeilingDisplayState_Waiting;
 }

@@ -1,32 +1,57 @@
 #include "DropCeilingDisplayST7789.h"
 
 namespace {
-const uint8_t HEADER_H = 16;
-const uint8_t BAR_X = 16;
-const uint8_t BAR_Y_START = 22;
-const uint8_t BAR_MAX_W = 184;
-const uint8_t BAR_H = 11;
-const uint8_t BAR_SPACING = 14;
-const uint8_t VAL_X = BAR_X + BAR_MAX_W + 4;
+// Adafruit GFX's built-in font is 6 x 8 pixels at size 1.
+const int16_t W = 240;
+const int16_t CHAR_W = 6;
+const int16_t CHAR_H = 8;
+
+const int16_t NAME_Y = 4;          // the name, up to 32 px tall
+const int16_t STATE_Y = 42;        // state and address, size 2
+const int16_t INFO_Y = 62;         // universe, firmware, resolution, size 1
+const int16_t BARS_Y = 76;         // the top of the bars
+const int16_t BARS_H = 44;
+const int16_t SLOT_W = W / DROPCEILING_CHANNELS;
+const int16_t BAR_W = 20;
+const int16_t LABEL_Y = BARS_Y + BARS_H + 4;
 
 const uint16_t COL_BG = ST77XX_BLACK;
-const uint16_t COL_BAR = 0x07E0;
-const uint16_t COL_BAR_BG = 0x2104;
 const uint16_t COL_TEXT = ST77XX_WHITE;
 const uint16_t COL_LABEL = 0xBDF7;
+const uint16_t COL_BAR = 0xFFFF;
+const uint16_t COL_BAR_BG = 0x2104;
+const uint16_t COL_GREEN = 0x07E0;
+const uint16_t COL_AMBER = 0xFD20;
+const uint16_t COL_RED = 0xF800;
+
+uint8_t largestSize(const char *text, int16_t width, uint8_t most) {
+  int16_t chars = static_cast<int16_t>(strlen(text));
+  for (uint8_t size = most; size > 1; size--) {
+    if (chars * CHAR_W * size <= width) {
+      return size;
+    }
+  }
+  return 1;
+}
 }
 
 DropCeilingDisplayST7789::DropCeilingDisplayST7789(int8_t cs, int8_t dc, int8_t rst)
-  : _tft(cs, dc, rst), _cs(cs), _dc(dc), _rst(rst), _ready(false) {
+  : _tft(cs, dc, rst), _cs(cs), _dc(dc), _rst(rst), _ready(false), _fwHi(0), _fwLo(0), _resolution(8) {
   memset(_displayValues, 0xFF, sizeof(_displayValues));
+  _name[0] = '\0';
 }
 
 bool DropCeilingDisplayST7789::begin(const DropCeilingConfig &config) {
-  (void)config;
   if (_cs < 0 || _dc < 0) {
     return false;
   }
+  strncpy(_name, config.nodeShortName != nullptr ? config.nodeShortName : "", sizeof(_name) - 1);
+  _name[sizeof(_name) - 1] = '\0';
+  _fwHi = config.firmwareVersionHi;
+  _fwLo = config.firmwareVersionLo;
+  _resolution = config.artnetResolution;
 
+  // The same pin powers the I2C connector, so the DAC, if it is fed from there: on before the DAC starts.
 #if defined(TFT_I2C_POWER)
   pinMode(TFT_I2C_POWER, OUTPUT);
   digitalWrite(TFT_I2C_POWER, HIGH);
@@ -40,24 +65,29 @@ bool DropCeilingDisplayST7789::begin(const DropCeilingConfig &config) {
   _tft.init(135, 240);
   _tft.setRotation(3);
   _tft.fillScreen(COL_BG);
-
-  _tft.setTextSize(2);
-  _tft.setTextColor(COL_BAR);
-  _tft.setCursor(20, 20);
-  _tft.println("Drop Ceiling");
-  _tft.setCursor(20, 42);
-  _tft.println("Controller");
-  _tft.setTextSize(1);
-  _tft.setTextColor(COL_LABEL);
-  _tft.setCursor(20, 70);
-  _tft.print("v");
-  _tft.print(config.firmwareVersionHi);
-  _tft.print(".");
-  _tft.println(config.firmwareVersionLo);
-  delay(500);
+  // The name from the first moment, while the network starts (DHCP can take seconds).
+  drawName("starting");
 
   _ready = true;
   return true;
+}
+
+void DropCeilingDisplayST7789::drawName(const char *below) {
+  uint8_t size = largestSize(_name, W - 8, 4);
+  int16_t x = (W - static_cast<int16_t>(strlen(_name)) * CHAR_W * size) / 2;
+  int16_t y = NAME_Y + (32 - CHAR_H * size) / 2;
+  _tft.fillRect(0, 0, W, STATE_Y - 2, COL_BG);
+  _tft.setTextWrap(false);
+  _tft.setTextSize(size);
+  _tft.setTextColor(COL_TEXT, COL_BG);
+  _tft.setCursor(x < 0 ? 0 : x, y);
+  _tft.print(_name);
+  if (below != nullptr) {
+    _tft.setTextSize(2);
+    _tft.setTextColor(COL_LABEL, COL_BG);
+    _tft.setCursor(4, STATE_Y);
+    _tft.print(below);
+  }
 }
 
 void DropCeilingDisplayST7789::drawStaticUI(const IPAddress &localIP, uint16_t universe, const uint8_t values[DROPCEILING_CHANNELS]) {
@@ -66,51 +96,62 @@ void DropCeilingDisplayST7789::drawStaticUI(const IPAddress &localIP, uint16_t u
   }
 
   _tft.fillScreen(COL_BG);
-  _tft.setTextSize(1);
+  drawName(nullptr);
+
+  // The address, right-aligned on the state's line: large when it fits beside the state (10.42.0.x does).
+  char ip[16];
+  snprintf(ip, sizeof(ip), "%u.%u.%u.%u", localIP[0], localIP[1], localIP[2], localIP[3]);
+  uint8_t ipSize = strlen(ip) <= 11 ? 2 : 1;
+  _tft.setTextSize(ipSize);
   _tft.setTextColor(COL_TEXT, COL_BG);
-  _tft.setCursor(0, 2);
-  _tft.print("IP: ");
-  _tft.print(localIP);
+  _tft.setCursor(W - 4 - static_cast<int16_t>(strlen(ip)) * CHAR_W * ipSize, ipSize == 2 ? STATE_Y : STATE_Y + 4);
+  _tft.print(ip);
 
-  _tft.setCursor(190, 2);
-  _tft.print("U:");
-  _tft.print(universe);
-
-  _tft.drawFastHLine(0, HEADER_H, 240, COL_LABEL);
+  char info[40];
+  snprintf(info, sizeof(info), "universe %u   fw %u.%u   %u-bit", universe, _fwHi, _fwLo, _resolution);
+  _tft.setTextSize(1);
+  _tft.setTextColor(COL_LABEL, COL_BG);
+  _tft.setCursor(4, INFO_Y);
+  _tft.print(info);
 
   for (uint8_t channel = 0; channel < DROPCEILING_CHANNELS; channel++) {
-    int y = BAR_Y_START + channel * BAR_SPACING;
+    int16_t x = channel * SLOT_W + (SLOT_W - BAR_W) / 2;
+    _tft.fillRect(x, BARS_Y, BAR_W, BARS_H, COL_BAR_BG);
+    _tft.setTextSize(1);
     _tft.setTextColor(COL_LABEL, COL_BG);
-    _tft.setCursor(0, y + 2);
+    _tft.setCursor(channel * SLOT_W + (SLOT_W - CHAR_W) / 2, LABEL_Y);
     _tft.print(channel + 1);
-    _tft.fillRect(BAR_X, y, BAR_MAX_W, BAR_H, COL_BAR_BG);
     _displayValues[channel] = 0xFF;
   }
 
-  setConnectionStatus(false);
+  setState(DropCeilingDisplayState_Waiting);
   updateChannels(values);
 }
 
 void DropCeilingDisplayST7789::setConnectionStatus(bool connected) {
+  setState(connected ? DropCeilingDisplayState_Live : DropCeilingDisplayState_Waiting);
+}
+
+void DropCeilingDisplayST7789::setState(DropCeilingDisplayState state) {
   if (!_ready) {
     return;
   }
-
-  int statusX = 120;
-  int statusY = 2;
-  _tft.fillRect(statusX, 0, 65, HEADER_H - 1, COL_BG);
-
-  if (connected) {
-    _tft.fillCircle(statusX + 4, statusY + 4, 3, 0x07E0);
-    _tft.setTextColor(0x07E0, COL_BG);
-    _tft.setCursor(statusX + 12, statusY);
-    _tft.print("LIVE");
-  } else {
-    _tft.fillCircle(statusX + 4, statusY + 4, 3, 0xF800);
-    _tft.setTextColor(0xF800, COL_BG);
-    _tft.setCursor(statusX + 12, statusY);
-    _tft.print("NO SIG");
+  const char *text = "WAIT";
+  uint16_t colour = COL_AMBER;
+  switch (state) {
+    case DropCeilingDisplayState_Live: text = "LIVE"; colour = COL_GREEN; break;
+    case DropCeilingDisplayState_Lost: text = "LOST"; colour = COL_RED; break;
+    case DropCeilingDisplayState_NoLink: text = "NO LINK"; colour = COL_RED; break;
+    case DropCeilingDisplayState_NoDac: text = "NO DAC"; colour = COL_RED; break;
+    default: break;
   }
+  // Up to 98 px: a dot and seven characters at size 2. The address on this line starts at 104 or later.
+  _tft.fillRect(0, STATE_Y - 1, 98, 17, COL_BG);
+  _tft.fillCircle(8, STATE_Y + 7, 5, colour);
+  _tft.setTextSize(2);
+  _tft.setTextColor(colour, COL_BG);
+  _tft.setCursor(18, STATE_Y);
+  _tft.print(text);
 }
 
 void DropCeilingDisplayST7789::updateChannels(const uint8_t values[DROPCEILING_CHANNELS]) {
@@ -130,22 +171,14 @@ bool DropCeilingDisplayST7789::isLikelyAvailable() {
 }
 
 void DropCeilingDisplayST7789::drawChannel(uint8_t channel, uint8_t value) {
-  int y = BAR_Y_START + channel * BAR_SPACING;
-
-  _tft.fillRect(BAR_X, y, BAR_MAX_W, BAR_H, COL_BAR_BG);
-  int barW = map(value, 0, 255, 0, BAR_MAX_W);
-  if (barW > 0) {
-    _tft.fillRect(BAR_X, y, barW, BAR_H, COL_BAR);
+  int16_t x = channel * SLOT_W + (SLOT_W - BAR_W) / 2;
+  int16_t h = static_cast<int16_t>((static_cast<int32_t>(value) * BARS_H + 127) / 255);
+  // Only the two parts, so the bar never flickers through empty.
+  if (h < BARS_H) {
+    _tft.fillRect(x, BARS_Y, BAR_W, BARS_H - h, COL_BAR_BG);
   }
-
-  _tft.setTextColor(COL_TEXT, COL_BG);
-  _tft.setCursor(VAL_X, y + 2);
-  if (value < 10) {
-    _tft.print("  ");
-  } else if (value < 100) {
-    _tft.print(" ");
+  if (h > 0) {
+    _tft.fillRect(x, BARS_Y + BARS_H - h, BAR_W, h, COL_BAR);
   }
-  _tft.print(value);
-
   _displayValues[channel] = value;
 }

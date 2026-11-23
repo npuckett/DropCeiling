@@ -19,7 +19,7 @@
 #endif
 
 // The Feather's 240 x 135 screen, read from across a room: the board's name as large as it fits, what it is
-// doing in colour, its address, and the eight output levels as bars.
+// doing in colour, its address, and the eight output levels as bars laid out like the board's ports 0-7.
 class DropCeilingDisplayST7789 : public DropCeilingDisplay {
 public:
   DropCeilingDisplayST7789(int8_t cs = DROPCEILING_TFT_CS, int8_t dc = DROPCEILING_TFT_DC, int8_t rst = DROPCEILING_TFT_RST);

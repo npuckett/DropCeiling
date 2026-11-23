@@ -36,7 +36,7 @@
 
 static const uint8_t FW_MAJOR = 2;
 static const uint8_t FW_MINOR = 1;
-static const char FW_VERSION[] = "2.1.0";
+static const char FW_VERSION[] = "2.1.1";
 
 // Loss of signal, from dropCeilingV2-DEV engine/DESIGN.md: after 10 s of silence fade to 0 over 30 s.
 // Off is dark, so this reads as closed and not broken. Frames after a loss, or after a restart, are

@@ -125,7 +125,8 @@ pass through the loop since start and since the last query: a long pass is what 
 
 The screen shows the board's name as large as it fits, its state in colour (`LIVE` green, `WAIT` amber, `LOST`,
 `NO LINK` or `NO DAC` red, worst first), its address, universe, firmware and resolution, and the eight output levels as
-bars. It is redrawn at most every 100 ms and only where something changed, so it costs the Art-Net loop little. FW7 (a dead board against a live driver) is a bench test, and FW8
+bars laid out like the board's ports: numbered 0 to 7 (DAC channels A to H), odd ports on the top row (1 3 5 7), even
+ports below (0 2 4 6), port 1 above port 0. It is redrawn at most every 100 ms and only where something changed, so it costs the Art-Net loop little. FW7 (a dead board against a live driver) is a bench test, and FW8
 (light sensors) is not built.
 
 ### Levels

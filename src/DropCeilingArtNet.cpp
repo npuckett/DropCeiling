@@ -1,5 +1,8 @@
 #include "DropCeilingArtNet.h"
 
+#include <stdio.h>
+#include <string.h>
+
 namespace {
 const char ARTNET_HEADER[] = "Art-Net";
 const uint16_t OP_DMX = 0x5000;
@@ -8,9 +11,17 @@ const uint16_t OP_POLL = 0x2000;
 bool hasArtNetHeader(const uint8_t *data, uint16_t length) {
   return length >= 10 && memcmp(data, ARTNET_HEADER, 8) == 0;
 }
+
+bool setLevel(uint16_t levels[DROPCEILING_CHANNELS], uint8_t channel, uint16_t level) {
+  if (levels[channel] == level) {
+    return false;
+  }
+  levels[channel] = level;
+  return true;
+}
 }
 
-DropCeilingArtNet::ParseResult DropCeilingArtNet::parsePacket(const uint8_t *data, uint16_t length, const DropCeilingConfig &config, uint8_t values[DROPCEILING_CHANNELS]) {
+DropCeilingArtNet::ParseResult DropCeilingArtNet::parsePacket(const uint8_t *data, uint16_t length, const DropCeilingConfig &config, uint16_t levels[DROPCEILING_CHANNELS]) {
   ParseResult result = {PacketIgnored, false};
 
   if (!hasArtNetHeader(data, length)) {
@@ -27,22 +38,30 @@ DropCeilingArtNet::ParseResult DropCeilingArtNet::parsePacket(const uint8_t *dat
     return result;
   }
 
-  uint16_t universe = data[14] | (data[15] << 8);
+  uint16_t universe = data[14] | ((data[15] & 0x7F) << 8);
   if (universe != config.artnetUniverse) {
     return result;
   }
 
   uint16_t dmxLength = (data[16] << 8) | data[17];
+  uint16_t available = length - 18;
+  if (dmxLength > available) {
+    dmxLength = available;
+  }
+  const uint8_t *slots = data + 18;
   result.type = PacketDmx;
 
   for (uint8_t channel = 0; channel < DROPCEILING_CHANNELS; channel++) {
-    uint16_t sourceChannel = config.artnetStartChannel + channel;
-    uint16_t packetIndex = 18 + sourceChannel;
-    if (packetIndex < length && sourceChannel < dmxLength) {
-      uint8_t value = data[packetIndex];
-      if (values[channel] != value) {
-        values[channel] = value;
-        result.changed = true;
+    if (config.artnetResolution == 16) {
+      uint32_t hi = static_cast<uint32_t>(config.artnetStartChannel) + 2u * channel;
+      if (hi + 1 < dmxLength) {
+        uint16_t level = static_cast<uint16_t>((slots[hi] << 8) | slots[hi + 1]);
+        result.changed = setLevel(levels, channel, level) || result.changed;
+      }
+    } else {
+      uint32_t slot = static_cast<uint32_t>(config.artnetStartChannel) + channel;
+      if (slot < dmxLength) {
+        result.changed = setLevel(levels, channel, DropCeilingLevels::fromByte(slots[slot])) || result.changed;
       }
     }
   }
@@ -50,11 +69,13 @@ DropCeilingArtNet::ParseResult DropCeilingArtNet::parsePacket(const uint8_t *dat
   return result;
 }
 
-size_t DropCeilingArtNet::buildPollReply(uint8_t *reply, size_t replySize, const DropCeilingConfig &config, const IPAddress &localIp) {
+size_t DropCeilingArtNet::buildPollReply(uint8_t *reply, size_t replySize, const DropCeilingConfig &config, const IPAddress &localIp,
+                                         bool live, uint16_t replies, const char *report) {
   if (replySize < PollReplySize) {
     return 0;
   }
 
+  // Offsets from the Art-Net 4 ArtPollReply table.
   memset(reply, 0, PollReplySize);
   memcpy(reply, "Art-Net\0", 8);
 
@@ -72,17 +93,32 @@ size_t DropCeilingArtNet::buildPollReply(uint8_t *reply, size_t replySize, const
   reply[16] = config.firmwareVersionHi;
   reply[17] = config.firmwareVersionLo;
 
-  reply[18] = (config.artnetUniverse >> 8) & 0x7F;
-  reply[19] = (config.artnetUniverse >> 4) & 0x0F;
+  reply[18] = (config.artnetUniverse >> 8) & 0x7F;  // NetSwitch
+  reply[19] = (config.artnetUniverse >> 4) & 0x0F;  // SubSwitch
 
   strncpy(reinterpret_cast<char *>(&reply[26]), config.nodeShortName, 17);
   strncpy(reinterpret_cast<char *>(&reply[44]), config.nodeLongName, 63);
 
-  reply[172] = 0;
-  reply[173] = 1;
-  reply[174] = 0x80;
-  reply[182] = 0x80;
-  reply[190] = config.artnetUniverse & 0x0F;
+  // NodeReport: "#xxxx [yyyy] text". 0001 is RcPowerOk.
+  if (report == nullptr) {
+    report = config.nodeReport == nullptr ? "" : config.nodeReport;
+  }
+  snprintf(reinterpret_cast<char *>(&reply[108]), 64, "#0001 [%04u] %s", static_cast<unsigned>(replies % 10000), report);
+
+  reply[172] = 0;     // NumPortsHi
+  reply[173] = 1;     // NumPortsLo
+  reply[174] = 0x80;  // PortTypes[0]: output, DMX512
+  reply[182] = live ? 0x80 : 0x00;  // GoodOutputA[0]: data being transmitted
+  reply[190] = config.artnetUniverse & 0x0F;  // SwOut[0]
+
+  memcpy(&reply[201], config.mac, 6);  // MAC
+  reply[207] = localIp[0];             // BindIp
+  reply[208] = localIp[1];
+  reply[209] = localIp[2];
+  reply[210] = localIp[3];
+  reply[211] = 1;  // BindIndex
+  // Status2: bit 3 15-bit port addresses, bit 2 DHCP capable, bit 1 address set by DHCP.
+  reply[212] = 0x08 | 0x04 | (config.useDhcp ? 0x02 : 0x00);
 
   return PollReplySize;
 }

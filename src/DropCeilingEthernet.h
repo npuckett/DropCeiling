@@ -4,27 +4,31 @@
 #include <Arduino.h>
 #include <Ethernet.h>
 #include <EthernetUdp.h>
-#include "DropCeilingArtNet.h"
-#include "DropCeilingInput.h"
+#include "DropCeilingArtNetInput.h"
 
-class DropCeilingEthernetInput : public DropCeilingInput {
+class DropCeilingEthernetInput : public DropCeilingArtNetInput {
 public:
   DropCeilingEthernetInput();
 
   bool begin(const DropCeilingConfig &config, const uint8_t currentValues[DROPCEILING_CHANNELS]) override;
-  bool read(uint8_t values[DROPCEILING_CHANNELS], bool &changed) override;
   bool connected() const override;
   IPAddress localIP() const override;
+  void maintain() override;
+
+  // False when the W5500 did not answer at begin().
+  bool hardwareFound() const { return _hardwareFound; }
+  // True when the cable is in and the far end is up. Unknown counts as up.
+  bool linkUp() const;
+  bool usingDhcp() const { return _usingDhcp; }
+
+protected:
+  UDP &udp() override { return _udp; }
 
 private:
-  DropCeilingConfig _config;
   EthernetUDP _udp;
   IPAddress _localIP;
-  uint8_t _buffer[DropCeilingArtNet::MaxPacketSize];
-  unsigned long _lastReceive;
-  bool _ready;
-
-  void sendPollReply();
+  bool _hardwareFound;
+  bool _usingDhcp;
 };
 
 #endif

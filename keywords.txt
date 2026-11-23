@@ -19,3 +19,17 @@ connected	KEYWORD2
 localIP	KEYWORD2
 setWiFiCredentials	KEYWORD2
 setDisplay	KEYWORD2
+DropCeilingFader	KEYWORD1
+DropCeilingSignal	KEYWORD1
+DropCeilingSignal_Waiting	LITERAL1
+DropCeilingSignal_Live	LITERAL1
+DropCeilingSignal_Lost	LITERAL1
+writeLevel	KEYWORD2
+getLevel	KEYWORD2
+getOutputLevel	KEYWORD2
+getCode	KEYWORD2
+signal	KEYWORD2
+frames	KEYWORD2
+losses	KEYWORD2
+dacErrors	KEYWORD2
+setNodeReport	KEYWORD2

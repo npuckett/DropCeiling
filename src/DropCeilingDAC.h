@@ -10,18 +10,24 @@ class DropCeilingDAC {
 public:
   DropCeilingDAC();
 
-  bool begin(const DropCeilingConfig &config);
-  bool writeChannel(uint8_t channelIndex, uint8_t value);
-  bool writeAll(const uint8_t values[DROPCEILING_CHANNELS]);
+  // Reads back what each channel already holds into startLevels (16-bit), and leaves it there, so a
+  // restart of the processor does not snap the outputs to 0. After power-up the DAC holds 0.
+  bool begin(const DropCeilingConfig &config, uint16_t startLevels[DROPCEILING_CHANNELS]);
+  bool writeLevel(uint8_t channelIndex, uint16_t level);
+  bool writeLevels(const uint16_t levels[DROPCEILING_CHANNELS]);
   bool ready() const;
+
+  // I2C writes that failed since begin(). A failed write is tried again on the next update.
+  uint32_t errors() const { return _errors; }
+  uint16_t code(uint8_t channelIndex) const;
 
 private:
   Adafruit_DACX578 _dac;
   bool _ready;
-  uint16_t _maxValue;
-  uint8_t _lastValues[DROPCEILING_CHANNELS];
-
-  uint16_t toDacValue(uint8_t value) const;
+  uint8_t _bits;
+  uint16_t _lastCodes[DROPCEILING_CHANNELS];
+  bool _known[DROPCEILING_CHANNELS];
+  uint32_t _errors;
 };
 
 #endif

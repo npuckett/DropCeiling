@@ -98,6 +98,39 @@ arduino-cli compile --fqbn esp32:esp32:adafruit_feather_esp32s3_tft --libraries 
 
 Non-Arduino controller examples are included under `extras/control-software/`. Keeping them in `extras/` preserves the standard Arduino library structure while packaging examples for ArtNet Ethernet, ArtNet WiFi, BLE, Serial CSV, and Standalone modes.
 
+## Drop Ceiling V2 node
+
+`examples/DropCeilingV2Node` is the firmware every Drop Ceiling V2 board runs, one binary for all boards. It
+carries the firmware items from dropCeilingV2-DEV's `docs/decisions/D0004-wiring.md`:
+
+| Item | What the node does |
+| --- | --- |
+| FW1 | Node number `n` in flash (NVS), set once over USB serial with `node <n>`. Everything below derives from it |
+| FW2 | Static `10.42.0.(200+n)/24`, MAC `02:DC:20:27:00:0n`. `net dhcp` and `subnet a.b.c` change this for a bench |
+| FW3 | Art-Net universe `n`, start slot 1, short name `DC2-Kn` |
+| FW4 | `res 16`: two slots per channel, high byte then low, DAC code = value >> 6. `res 8` (default): one slot per channel |
+| FW5 | After 10 s without a frame, fade to 0 over 30 s. Frames after a loss or a restart fade in over 2 s |
+| FW6 | Health in ArtPollReply (version, MAC, node report `up= fr= e= rs= r=` and `LIVE`/`WAIT`/`LOST`), and an 8 s hardware watchdog |
+
+A restart of the processor no longer drops the outputs: the library reads back what the DAC holds and starts from there.
+Node 0 means unassigned: DHCP, universe 0, and a MAC made from the chip's own.
+
+Serial console at 115200 baud: `show` prints one JSON line with identity, network, health and the DAC codes. `node`,
+`res`, `net` and `subnet` write flash and restart. FW7 (a dead board against a live driver) is a bench test, and FW8
+(light sensors) is not built.
+
+### Levels
+
+Every input now works in 16-bit levels, 0-65535. A byte `v` becomes `v * 257`, so 255 still reaches full scale and a
+byte lands within one DAC code of the old `map(v, 0, 255, 0, 1023)`. `writeLevel()`, `getLevel()`, `getOutputLevel()`
+and `getCode()` expose them. Loss-of-signal fades are off unless `config.lossTimeoutMs` is set, so the other examples
+behave as before.
+
+### Tests
+
+`extras/tests/run.sh` builds and runs desktop tests of the level maths, the fades, ArtDmx parsing in both resolutions
+and the ArtPollReply layout. CI runs them and compiles every example.
+
 ## Project Context
 
 See `PROJECT_CONTEXT.md` for the hardware background, source-repo history, compatibility notes, and next engineering steps.

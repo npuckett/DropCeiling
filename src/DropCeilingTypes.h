@@ -3,8 +3,9 @@
 
 #include <Arduino.h>
 #include <IPAddress.h>
+#include "DropCeilingLevels.h"
 
-static const uint8_t DROPCEILING_CHANNELS = 8;
+static const uint8_t DROPCEILING_CHANNELS = DROPCEILING_LEVEL_CHANNELS;
 
 enum DropCeilingMode {
   DropCeilingMode_Ethernet,
@@ -35,13 +36,24 @@ struct DropCeilingConfig {
   IPAddress staticGateway = IPAddress(192, 168, 1, 1);
   IPAddress staticDns = IPAddress(192, 168, 1, 1);
   uint8_t mac[6] = {0xDE, 0xAD, 0xBE, 0xEF, 0xFE, 0xED};
+  unsigned long dhcpTimeoutMs = 60000;  // how long Ethernet.begin() waits for a DHCP server
   unsigned long dhcpRetransmitMs = 2000;
   uint8_t dhcpRetryCount = 4;
 
   uint16_t artnetPort = 6454;
   uint16_t artnetUniverse = 0;
   uint16_t artnetStartChannel = 0;
+  // 8: one slot per channel, slot start+c. 16: two slots per channel, start+2c high byte then
+  // start+2c+1 low byte, so 16 slots for 8 channels.
+  uint8_t artnetResolution = 8;
   unsigned long connectionTimeoutMs = 3000;
+
+  // Loss of signal, for the network inputs. 0 keeps the old behaviour: hold the last frame for ever.
+  // See DropCeilingFader in DropCeilingLevels.h.
+  unsigned long lossTimeoutMs = 0;
+  unsigned long lossFadeMs = 30000;
+  uint16_t lossLevel = 0;          // 16-bit level the output fades to
+  unsigned long resumeFadeMs = 0;  // fade from where the output is to the first frames
 
   const char *wifiSsid = nullptr;
   const char *wifiPassword = nullptr;
@@ -63,6 +75,11 @@ struct DropCeilingConfig {
   const char *nodeLongName = "Drop Ceiling 0-10V Controller";
   uint8_t firmwareVersionHi = 1;
   uint8_t firmwareVersionLo = 0;
+  // Optional text for the ArtPollReply node report, after the status code and counter. Health goes here.
+  const char *nodeReport = nullptr;
+  // If set, called as each ArtPollReply is built, to write the report text fresh (counters as of this moment).
+  // Takes the place of nodeReport.
+  void (*nodeReportFn)(char *out, size_t size) = nullptr;
 
   uint8_t standaloneValues[DROPCEILING_CHANNELS] = {0, 0, 0, 0, 0, 0, 0, 0};
 };

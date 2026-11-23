@@ -92,6 +92,7 @@ public:
       snapshot();
       _since = now;
       _resuming = false;
+      _fading = true;
       _losses++;
     }
 
@@ -107,8 +108,11 @@ public:
         }
         break;
       case DropCeilingSignal_Lost:
+        if (_fading && now - _since >= lossFadeMs) {
+          _fading = false;  // settled: millis() wrapping later must not restart the fade
+        }
         for (uint8_t i = 0; i < DROPCEILING_LEVEL_CHANNELS; i++) {
-          _out[i] = DropCeilingLevels::lerp(_from[i], lossLevel, now - _since, lossFadeMs);
+          _out[i] = _fading ? DropCeilingLevels::lerp(_from[i], lossLevel, now - _since, lossFadeMs) : lossLevel;
         }
         break;
     }
@@ -127,6 +131,7 @@ private:
   uint32_t _lastFrame = 0;
   uint32_t _losses = 0;
   bool _resuming = false;
+  bool _fading = false;
 
   void snapshot() {
     for (uint8_t i = 0; i < DROPCEILING_LEVEL_CHANNELS; i++) {

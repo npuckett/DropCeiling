@@ -112,6 +112,18 @@ static void fader() {
   CHECK(w.update(target, near + 10000)[0] == 5000);
   CHECK(w.signal() == DropCeilingSignal_Lost);
 
+  // A settled loss stays settled when millis() wraps, 49.7 days later: no jump back up.
+  DropCeilingFader z;
+  z.lossTimeoutMs = 10000; z.lossFadeMs = 30000; z.lossLevel = 0; z.resumeFadeMs = 2000;
+  z.begin(held, 0);
+  CHECK(z.update(target, 10000)[0] == 6000);
+  CHECK(z.update(target, 40000)[0] == 0);
+  for (uint64_t t = 40000; t < 0x100000000ull + 80000; t += 1000003) {
+    CHECK(z.update(target, static_cast<uint32_t>(t))[0] == 0);
+  }
+  CHECK(z.update(target, 10000)[0] == 0);
+  CHECK(z.update(target, 25000)[0] == 0);
+
   // Turned off: the output is the target, silence holds.
   DropCeilingFader off;
   off.begin(held, 0);

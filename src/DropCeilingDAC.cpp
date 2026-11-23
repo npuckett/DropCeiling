@@ -31,7 +31,11 @@ bool DropCeilingDAC::begin(const DropCeilingConfig &config, uint16_t startLevels
 
   for (uint8_t channel = 0; channel < DROPCEILING_CHANNELS; channel++) {
     uint16_t code = 0;
-    if (_dac.readChannelValue(channel, &code)) {
+    bool read = false;
+    for (uint8_t attempt = 0; attempt < 3 && !read; attempt++) {
+      read = _dac.readChannelValue(channel, &code);
+    }
+    if (read) {
       _lastCodes[channel] = code;
       _known[channel] = true;
       // Back to a 16-bit level: the code in the top bits.

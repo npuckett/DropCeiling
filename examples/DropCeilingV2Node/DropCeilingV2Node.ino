@@ -15,7 +15,7 @@
 //
 // Serial console, 115200 baud, one command a line:
 //   show                 one JSON line: identity, network, health, levels
-//   node <0-99>          set the node number, then restart
+//   node <0-54>          set the node number, then restart
 //   res <8|16>           Art-Net resolution, then restart
 //   net <static|dhcp>    addressing, then restart
 //   subnet <a.b.c>       first three octets for the static address, then restart (default 10.42.0)
@@ -27,6 +27,7 @@
 #include <esp_mac.h>
 #include <esp_system.h>
 #include <esp_task_wdt.h>
+#include <esp_timer.h>
 
 static const uint8_t FW_MAJOR = 2;
 static const uint8_t FW_MINOR = 0;
@@ -39,9 +40,11 @@ static const uint32_t LOSS_TIMEOUT_MS = 10000;
 static const uint32_t LOSS_FADE_MS = 30000;
 static const uint32_t RESUME_FADE_MS = 2000;
 
-// The loop resets the watchdog every pass. A loop stuck this long restarts the processor; the DAC
-// keeps its outputs through the restart and the board takes up from them.
-static const uint32_t WATCHDOG_MS = 8000;
+// The loop resets the watchdog every pass. A loop stuck this long restarts the processor; the board takes
+// up from what the DAC holds. 15 s, because a failed DHCP renewal (net dhcp only) blocks the loop about 8 s.
+static const uint32_t WATCHDOG_MS = 15000;
+// 200 + n must stay a host address below .255.
+static const uint8_t MAX_NODE = 54;
 // A board whose DAC or network did not start restarts after this long, loudly, rather than sit dark.
 static const uint32_t NOT_READY_RESTART_MS = 30000;
 
@@ -91,6 +94,9 @@ const char *signalName(DropCeilingSignal s) {
 void loadSettings() {
   prefs.begin("dc2", true);
   node = prefs.getUChar("node", 0);
+  if (node > MAX_NODE) {
+    node = 0;
+  }
   resolution = prefs.getUChar("res", 8);
   useDhcp = prefs.getBool("dhcp", false);
   if (prefs.getBytesLength("subnet") == 3) {
@@ -118,7 +124,8 @@ void deriveIdentity() {
   memcpy(config.mac, mac, 6);
 
   config.useDhcp = node == 0 || useDhcp;
-  config.staticIp = IPAddress(subnet[0], subnet[1], subnet[2], node == 0 ? 199 : 200 + node);
+  // Unassigned boards fall back to .150-.199 by their chip, so two new boards rarely clash without DHCP.
+  config.staticIp = IPAddress(subnet[0], subnet[1], subnet[2], node == 0 ? 150 + chip[5] % 50 : 200 + node);
   config.staticSubnet = IPAddress(255, 255, 255, 0);
   config.staticGateway = IPAddress(subnet[0], subnet[1], subnet[2], 1);
   config.staticDns = IPAddress(subnet[0], subnet[1], subnet[2], 1);
@@ -154,9 +161,14 @@ void writeReport(char *out, size_t size) {
     snprintf(out, size, "starting");
     return;
   }
-  snprintf(out, size, "up=%lu fr=%lu e=%lu rs=%s r=%u %s", static_cast<unsigned long>(millis() / 1000),
+  snprintf(out, size, "up=%llu fr=%lu e=%lu rs=%s r=%u %s", uptimeS(),
            static_cast<unsigned long>(ceiling->frames()), static_cast<unsigned long>(ceiling->dacErrors()), resetCause(),
            resolution, ceiling->dacReady() ? signalName(ceiling->signal()) : "NODAC");
+}
+
+// 64-bit, so it never wraps: millis() would every 49.7 days, and the tower reads a smaller uptime as a restart.
+unsigned long long uptimeS() {
+  return static_cast<unsigned long long>(esp_timer_get_time() / 1000000LL);
 }
 
 void printMac(const uint8_t *mac) {
@@ -171,10 +183,10 @@ void show() {
                 ceiling->ethernet().usingDhcp() ? "true" : "false", config.artnetUniverse, resolution);
   Serial.printf(",\"ethernet\":%s,\"link\":%s,\"dac\":%s", ceiling->ethernet().hardwareFound() ? "true" : "false",
                 ceiling->ethernet().linkUp() ? "true" : "false", ceiling->dacReady() ? "true" : "false");
-  Serial.printf(",\"signal\":\"%s\",\"frames\":%lu,\"losses\":%lu,\"dacErrors\":%lu,\"uptimeS\":%lu,\"reset\":\"%s\",\"codes\":[",
+  Serial.printf(",\"signal\":\"%s\",\"frames\":%lu,\"losses\":%lu,\"dacErrors\":%lu,\"uptimeS\":%llu,\"reset\":\"%s\",\"codes\":[",
                 signalName(ceiling->signal()), static_cast<unsigned long>(ceiling->frames()),
                 static_cast<unsigned long>(ceiling->losses()), static_cast<unsigned long>(ceiling->dacErrors()),
-                static_cast<unsigned long>(millis() / 1000), resetCause());
+                uptimeS(), resetCause());
   for (uint8_t c = 1; c <= DROPCEILING_CHANNELS; c++) {
     Serial.printf("%s%u", c == 1 ? "" : ",", ceiling->getCode(c));
   }
@@ -198,8 +210,8 @@ void handleCommand(char *line) {
     show();
   } else if (strcmp(cmd, "node") == 0 && arg != nullptr) {
     int n = atoi(arg);
-    if (n < 0 || n > 99 || (n == 0 && strcmp(arg, "0") != 0)) {
-      Serial.println("error: node is 0 to 99");
+    if (n < 0 || n > MAX_NODE || (n == 0 && strcmp(arg, "0") != 0)) {
+      Serial.printf("error: node is 0 to %u\n", MAX_NODE);
       return;
     }
     prefs.begin("dc2", false);
@@ -239,7 +251,7 @@ void handleCommand(char *line) {
   } else if (strcmp(cmd, "reboot") == 0) {
     restart("asked");
   } else {
-    Serial.println("commands: show | node <0-99> | res <8|16> | net <static|dhcp> | subnet <a.b.c> | reboot");
+    Serial.println("commands: show | node <0-54> | res <8|16> | net <static|dhcp> | subnet <a.b.c> | reboot");
   }
 }
 
